@@ -8,12 +8,12 @@ namespace PnpHelpers
     /// <summary>
     /// The payload for a property update response.
     /// </summary>
-    public class WritablePropertyResponse
+    public class WritablePropertyResponseOld
     {
         /// <summary>
         /// Empty constructor.
         /// </summary>
-        public WritablePropertyResponse() { }
+        public WritablePropertyResponseOld() { }
 
         /// <summary>
         /// Convenience constructor for specifying the properties.
@@ -22,7 +22,7 @@ namespace PnpHelpers
         /// <param name="ackCode">The acknowledgement code, usually an HTTP Status Code e.g. 200, 400.</param>
         /// <param name="ackVersion">The acknowledgement version, as supplied in the property update request.</param>
         /// <param name="ackDescription">The acknowledgement description, an optional, human-readable message about the result of the property update.</param>
-        public WritablePropertyResponse(object propertyValue, int ackCode, long ackVersion, string ackDescription = null)
+        public WritablePropertyResponseOld(object propertyValue, int ackCode, long ackVersion, string ackDescription = null)
         {
             PropertyValue = propertyValue;
             AckCode = ackCode;

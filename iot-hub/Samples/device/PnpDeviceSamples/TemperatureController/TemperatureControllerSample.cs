@@ -78,7 +78,9 @@ namespace Microsoft.Azure.Devices.Client.Samples
             await _deviceClient.SetCommandCallbackHandlerAsync("getMaxMinReport", HandleMaxMinReportCommand, Thermostat2, cancellationToken);
 
             _logger.LogDebug("Set handler to receive 'targetTemperature' updates.");
-            await _deviceClient.ListenToWritablePropertyEvent(ListenToWritablePropertiesCallback, null, cancellationToken);
+            await _deviceClient.SubscribeToWritablePropertyEvent(ListenToWritablePropertiesCallback, null, cancellationToken);
+            await _deviceClient.SubscribeToWritablePropertyEvent(ListenToWritablePropertiesCallback, Thermostat1, null, cancellationToken);
+            await _deviceClient.SubscribeToWritablePropertyEvent(ListenToWritablePropertiesCallback, Thermostat2, null, cancellationToken);
             _writablePropertyUpdateCallbacks.Add(Thermostat1, TargetTemperatureUpdateCallbackAsync);
             _writablePropertyUpdateCallbacks.Add(Thermostat2, TargetTemperatureUpdateCallbackAsync);
 
@@ -184,16 +186,16 @@ namespace Microsoft.Azure.Devices.Client.Samples
             }
         }
 
-        private void ListenToWritablePropertiesCallback(TwinCollection desiredProperties, object userContext)
+        private void ListenToWritablePropertiesCallback(Properties desiredProperties, object userContext)
         {
             bool callbackNotInvoked = true;
 
-            foreach (KeyValuePair<string, object> propertyUpdate in desiredProperties)
+            foreach (KeyValuePair<string, object> propertyUpdate in desiredProperties.Writable)
             {
                 string componentName = propertyUpdate.Key;
                 if (_writablePropertyUpdateCallbacks.ContainsKey(componentName))
                 {
-                    _writablePropertyUpdateCallbacks[componentName]?.Invoke(desiredProperties, componentName);
+                    _writablePropertyUpdateCallbacks[componentName]?.Invoke(desiredProperties[componentName].Writable, componentName);
                     callbackNotInvoked = false;
                 }
             }
@@ -226,8 +228,8 @@ namespace Microsoft.Azure.Devices.Client.Samples
             _logger.LogDebug($"Property: Received - component=\"{componentName}\", {{ \"{propertyName}\": {targetTemperature}°C }}.");
 
 
-            var writablePropertyInProgress = new WritableProperty(targetTemperature, (int)StatusCode.InProgress, (int)desiredProperties.Version);
-            await _deviceClient.RespondToWritablePropertyEventAsync(propertyName, writablePropertyInProgress, componentName);
+            var writablePropertyInProgress = new WritablePropertyResponse(targetTemperature, (int)StatusCode.InProgress, (int)desiredProperties.Version);
+            await _deviceClient.UpdatePropertyAsync(propertyName, writablePropertyInProgress, componentName);
 
             _logger.LogDebug($"Property: Update - component=\"{componentName}\", {{\"{propertyName}\": {targetTemperature} }} in °C is {StatusCode.InProgress}.");
 
@@ -239,10 +241,10 @@ namespace Microsoft.Azure.Devices.Client.Samples
                 await Task.Delay(6 * 1000);
             }
 
-            var writablePropertySuccess = new WritableProperty(_temperature[componentName], (int)StatusCode.Completed, (int)desiredProperties.Version);
+            var writablePropertySuccess = new WritablePropertyResponse(_temperature[componentName], (int)StatusCode.Completed, (int)desiredProperties.Version);
             writablePropertySuccess.AckDescription = "Successfully updated target temperature";
 
-            await _deviceClient.RespondToWritablePropertyEventAsync(propertyName, writablePropertySuccess, componentName);
+            await _deviceClient.UpdatePropertyAsync(propertyName, writablePropertySuccess, componentName);
             _logger.LogDebug($"Property: Update - component=\"{componentName}\", {{\"{propertyName}\": {_temperature[componentName]} }} in °C is {StatusCode.Completed}");
         }
 
@@ -263,7 +265,7 @@ namespace Microsoft.Azure.Devices.Client.Samples
                     { "totalMemory", 1024 },
                 };
 
-            await _deviceClient.UpdatePropertiesAsync(propertyDictionary, componentName, cancellationToken);
+            await _deviceClient.UpdatePropertiesAsync(propertyDictionary, componentName, null, cancellationToken);
             _logger.LogDebug($"Property: Update - component = '{componentName}', properties update is complete.");
         }
 

@@ -262,7 +262,7 @@ namespace PnpHelpers
                 {
                     throw new ArgumentNullException(nameof(kvp.Key), $"One of the propertyPairs keys was null, empty, or white space.");
                 }
-                response.Add(kvp.Key, new WritablePropertyResponse(kvp.Value, ackCode, ackVersion, ackDescription));
+                response.Add(kvp.Key, new WritablePropertyResponse(kvp.Value, ackCode, (int)ackVersion));
             }
 
             return new TwinCollection(JsonConvert.SerializeObject(response));
@@ -368,7 +368,7 @@ namespace PnpHelpers
                 {
                     throw new ArgumentNullException(nameof(kvp.Key), $"One of the propertyPairs keys was null, empty, or white space.");
                 }
-                propertyPatch.Add(kvp.Key, new WritablePropertyResponse(kvp.Value, ackCode, ackVersion, ackDescription));
+                propertyPatch.Add(kvp.Key, new WritablePropertyResponse(kvp.Value, ackCode, (int)ackVersion));
             }
 
             var response = new Dictionary<string, object>
