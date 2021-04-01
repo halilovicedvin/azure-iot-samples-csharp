@@ -51,10 +51,10 @@ namespace Microsoft.Azure.Devices.Client.Samples
             // -> Send "maxTempSinceLastReboot" over property update, when a new max temperature is set.
 
             _logger.LogDebug($"Set handler to receive \"targetTemperature\" updates.");
-            await _deviceClient.SetDesiredPropertyUpdateCallbackAsync(TargetTemperatureUpdateCallbackAsync, _deviceClient, cancellationToken);
+            await _deviceClient.ListenToWritablePropertyEvent(TargetTemperatureUpdateCallbackAsync, _deviceClient, cancellationToken);
 
             _logger.LogDebug($"Set handler for \"getMaxMinReport\" command.");
-            await _deviceClient.SetMethodHandlerAsync("getMaxMinReport", HandleMaxMinReportCommand, _deviceClient, cancellationToken);
+            await _deviceClient.SetCommandCallbackHandlerAsync(HandleMaxMinReportCommand, _deviceClient, cancellationToken);
 
             bool temperatureReset = true;
             while (!cancellationToken.IsCancellationRequested)
@@ -73,7 +73,7 @@ namespace Microsoft.Azure.Devices.Client.Samples
 
         // The desired property update callback, which receives the target temperature as a desired property update,
         // and updates the current temperature value over telemetry and reported property update.
-        private async Task TargetTemperatureUpdateCallbackAsync(TwinCollection desiredProperties, object userContext)
+        private async void TargetTemperatureUpdateCallbackAsync(TwinCollection desiredProperties, object userContext)
         {
             const string propertyName = "targetTemperature";
 
@@ -115,7 +115,7 @@ namespace Microsoft.Azure.Devices.Client.Samples
 
         // The callback to handle "getMaxMinReport" command. This method will returns the max, min and average temperature
         // from the specified time to the current time.
-        private Task<MethodResponse> HandleMaxMinReportCommand(MethodRequest request, object userContext)
+        private Task<CommandResponse> HandleMaxMinReportCommand(CommandRequest request, object userContext)
         {
             try
             {
@@ -144,16 +144,16 @@ namespace Microsoft.Azure.Devices.Client.Samples
                         $"startTime={report.startTime.LocalDateTime}, endTime={report.endTime.LocalDateTime}");
 
                     byte[] responsePayload = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(report));
-                    return Task.FromResult(new MethodResponse(responsePayload, (int)StatusCode.Completed));
+                    return Task.FromResult(new CommandResponse(responsePayload, (int)StatusCode.Completed));
                 }
 
                 _logger.LogDebug($"Command: No relevant readings found since {sinceInDateTimeOffset.LocalDateTime}, cannot generate any report.");
-                return Task.FromResult(new MethodResponse((int)StatusCode.NotFound));
+                return Task.FromResult(new CommandResponse((int)StatusCode.NotFound));
             }
             catch (JsonReaderException ex)
             {
                 _logger.LogDebug($"Command input is invalid: {ex.Message}.");
-                return Task.FromResult(new MethodResponse((int)StatusCode.BadRequest));
+                return Task.FromResult(new CommandResponse((int)StatusCode.BadRequest));
             }
         }
 
@@ -175,16 +175,9 @@ namespace Microsoft.Azure.Devices.Client.Samples
         {
             const string telemetryName = "temperature";
 
-            string telemetryPayload = $"{{ \"{telemetryName}\": {_temperature} }}";
-            using var message = new Message(Encoding.UTF8.GetBytes(telemetryPayload))
-            {
-                ContentEncoding = "utf-8",
-                ContentType = "application/json",
-            };
-
-            await _deviceClient.SendEventAsync(message);
+            await _deviceClient.SendTelemetryAsync(telemetryName, _temperature);
             _logger.LogDebug($"Telemetry: Sent - {{ \"{telemetryName}\": {_temperature}°C }}.");
-
+            
             _temperatureReadingsDateTimeOffset.Add(DateTimeOffset.Now, _temperature);
         }
 
@@ -193,10 +186,8 @@ namespace Microsoft.Azure.Devices.Client.Samples
         {
             const string propertyName = "maxTempSinceLastReboot";
 
-            var reportedProperties = new TwinCollection();
-            reportedProperties[propertyName] = _maxTemp;
+            await _deviceClient.UpdatePropertyAsync(propertyName, _maxTemp);
 
-            await _deviceClient.UpdateReportedPropertiesAsync(reportedProperties);
             _logger.LogDebug($"Property: Update - {{ \"{propertyName}\": {_maxTemp}°C }} is {StatusCode.Completed}.");
         }
     }

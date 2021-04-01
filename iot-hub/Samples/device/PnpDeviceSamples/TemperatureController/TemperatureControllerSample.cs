@@ -43,8 +43,8 @@ namespace Microsoft.Azure.Devices.Client.Samples
 
         // A dictionary to hold all desired property change callbacks that this pnp device should be able to handle.
         // The key for this dictionary is the componentName.
-        private readonly IDictionary<string, DesiredPropertyUpdateCallback> _desiredPropertyUpdateCallbacks =
-            new Dictionary<string, DesiredPropertyUpdateCallback>();
+        private readonly IDictionary<string, Action<TwinCollection, object>> _writablePropertyUpdateCallbacks =
+            new Dictionary<string, Action<TwinCollection, object>>();
 
         // Dictionary to hold the current temperature for each "Thermostat" component.
         private readonly Dictionary<string, double> _temperature = new Dictionary<string, double>();
@@ -70,17 +70,17 @@ namespace Microsoft.Azure.Devices.Client.Samples
             // -> Send "maxTempSinceLastReboot" over property update, when a new max temperature is set - on "Thermostat" components.
 
             _logger.LogDebug("Set handler for 'reboot' command.");
-            await _deviceClient.SetMethodHandlerAsync("reboot", HandleRebootCommandAsync, _deviceClient, cancellationToken);
+            await _deviceClient.SetCommandCallbackHandlerAsync("reboot", HandleRebootCommandAsync, userContext: _deviceClient, cancellationToken: cancellationToken);
 
             // For a component-level command, the command name is in the format "<component-name>*<command-name>".
             _logger.LogDebug($"Set handler for \"getMaxMinReport\" command.");
-            await _deviceClient.SetMethodHandlerAsync("thermostat1*getMaxMinReport", HandleMaxMinReportCommand, Thermostat1, cancellationToken);
-            await _deviceClient.SetMethodHandlerAsync("thermostat2*getMaxMinReport", HandleMaxMinReportCommand, Thermostat2, cancellationToken);
+            await _deviceClient.SetCommandCallbackHandlerAsync("getMaxMinReport", HandleMaxMinReportCommand, Thermostat1, cancellationToken);
+            await _deviceClient.SetCommandCallbackHandlerAsync("getMaxMinReport", HandleMaxMinReportCommand, Thermostat2, cancellationToken);
 
             _logger.LogDebug("Set handler to receive 'targetTemperature' updates.");
-            await _deviceClient.SetDesiredPropertyUpdateCallbackAsync(SetDesiredPropertyUpdateCallback, null, cancellationToken);
-            _desiredPropertyUpdateCallbacks.Add(Thermostat1, TargetTemperatureUpdateCallbackAsync);
-            _desiredPropertyUpdateCallbacks.Add(Thermostat2, TargetTemperatureUpdateCallbackAsync);
+            await _deviceClient.ListenToWritablePropertyEvent(ListenToWritablePropertiesCallback, null, cancellationToken);
+            _writablePropertyUpdateCallbacks.Add(Thermostat1, TargetTemperatureUpdateCallbackAsync);
+            _writablePropertyUpdateCallbacks.Add(Thermostat2, TargetTemperatureUpdateCallbackAsync);
 
             await UpdateDeviceInformationAsync(cancellationToken);
             await SendDeviceSerialNumberAsync(cancellationToken);
@@ -108,7 +108,7 @@ namespace Microsoft.Azure.Devices.Client.Samples
         }
 
         // The callback to handle "reboot" command. This method will send a temperature update (of 0°C) over telemetry for both associated components.
-        private async Task<MethodResponse> HandleRebootCommandAsync(MethodRequest request, object userContext)
+        private async Task<CommandResponse> HandleRebootCommandAsync(CommandRequest request, object userContext)
         {
             try
             {
@@ -125,15 +125,15 @@ namespace Microsoft.Azure.Devices.Client.Samples
             catch (JsonReaderException ex)
             {
                 _logger.LogDebug($"Command input is invalid: {ex.Message}.");
-                return new MethodResponse((int)StatusCode.BadRequest);
+                return new CommandResponse((int)StatusCode.BadRequest);
             }
 
-            return new MethodResponse((int)StatusCode.Completed);
+            return new CommandResponse((int)StatusCode.Completed);
         }
 
         // The callback to handle "getMaxMinReport" command. This method will returns the max, min and average temperature from the
         // specified time to the current time.
-        private Task<MethodResponse> HandleMaxMinReportCommand(MethodRequest request, object userContext)
+        private Task<CommandResponse> HandleMaxMinReportCommand(CommandRequest request, object userContext)
         {
             try
             {
@@ -166,34 +166,34 @@ namespace Microsoft.Azure.Devices.Client.Samples
                             $"endTime={report.endTime.LocalDateTime}");
 
                         byte[] responsePayload = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(report));
-                        return Task.FromResult(new MethodResponse(responsePayload, (int)StatusCode.Completed));
+                        return Task.FromResult(new CommandResponse(responsePayload, (int)StatusCode.Completed));
                     }
 
                     _logger.LogDebug($"Command: component=\"{componentName}\", no relevant readings found since {sinceInDateTimeOffset.LocalDateTime}, " +
                         $"cannot generate any report.");
-                    return Task.FromResult(new MethodResponse((int)StatusCode.NotFound));
+                    return Task.FromResult(new CommandResponse((int)StatusCode.NotFound));
                 }
 
                 _logger.LogDebug($"Command: component=\"{componentName}\", no temperature readings sent yet, cannot generate any report.");
-                return Task.FromResult(new MethodResponse((int)StatusCode.NotFound));
+                return Task.FromResult(new CommandResponse((int)StatusCode.NotFound));
             }
             catch (JsonReaderException ex)
             {
                 _logger.LogDebug($"Command input is invalid: {ex.Message}.");
-                return Task.FromResult(new MethodResponse((int)StatusCode.BadRequest));
+                return Task.FromResult(new CommandResponse((int)StatusCode.BadRequest));
             }
         }
 
-        private Task SetDesiredPropertyUpdateCallback(TwinCollection desiredProperties, object userContext)
+        private void ListenToWritablePropertiesCallback(TwinCollection desiredProperties, object userContext)
         {
             bool callbackNotInvoked = true;
 
             foreach (KeyValuePair<string, object> propertyUpdate in desiredProperties)
             {
                 string componentName = propertyUpdate.Key;
-                if (_desiredPropertyUpdateCallbacks.ContainsKey(componentName))
+                if (_writablePropertyUpdateCallbacks.ContainsKey(componentName))
                 {
-                    _desiredPropertyUpdateCallbacks[componentName]?.Invoke(desiredProperties, componentName);
+                    _writablePropertyUpdateCallbacks[componentName]?.Invoke(desiredProperties, componentName);
                     callbackNotInvoked = false;
                 }
             }
@@ -202,13 +202,11 @@ namespace Microsoft.Azure.Devices.Client.Samples
             {
                 _logger.LogDebug($"Property: Received a property update that is not implemented by any associated component.");
             }
-
-            return Task.CompletedTask;
         }
 
         // The desired property update callback, which receives the target temperature as a desired property update,
         // and updates the current temperature value over telemetry and property update.
-        private async Task TargetTemperatureUpdateCallbackAsync(TwinCollection desiredProperties, object userContext)
+        private async void TargetTemperatureUpdateCallbackAsync(TwinCollection desiredProperties, object userContext)
         {
             const string propertyName = "targetTemperature";
             string componentName = (string)userContext;
@@ -218,6 +216,7 @@ namespace Microsoft.Azure.Devices.Client.Samples
                 propertyName,
                 out double targetTemperature,
                 componentName);
+
             if (!targetTempUpdateReceived)
             {
                 _logger.LogDebug($"Property: Update - component=\"{componentName}\", received an update which is not associated with a valid property.\n{desiredProperties.ToJson()}");
@@ -226,14 +225,10 @@ namespace Microsoft.Azure.Devices.Client.Samples
 
             _logger.LogDebug($"Property: Received - component=\"{componentName}\", {{ \"{propertyName}\": {targetTemperature}°C }}.");
 
-            TwinCollection pendingReportedProperty = PnpConvention.CreateComponentWritablePropertyResponse(
-                componentName,
-                propertyName,
-                targetTemperature,
-                (int)StatusCode.InProgress,
-                desiredProperties.Version);
 
-            await _deviceClient.UpdateReportedPropertiesAsync(pendingReportedProperty);
+            var writablePropertyInProgress = new WritableProperty(targetTemperature, (int)StatusCode.InProgress, (int)desiredProperties.Version);
+            await _deviceClient.RespondToWritablePropertyEventAsync(propertyName, writablePropertyInProgress, componentName);
+
             _logger.LogDebug($"Property: Update - component=\"{componentName}\", {{\"{propertyName}\": {targetTemperature} }} in °C is {StatusCode.InProgress}.");
 
             // Update Temperature in 2 steps
@@ -244,15 +239,10 @@ namespace Microsoft.Azure.Devices.Client.Samples
                 await Task.Delay(6 * 1000);
             }
 
-            TwinCollection completedReportedProperty = PnpConvention.CreateComponentWritablePropertyResponse(
-                componentName,
-                propertyName,
-                _temperature[componentName],
-                (int)StatusCode.Completed,
-                desiredProperties.Version,
-                "Successfully updated target temperature");
+            var writablePropertySuccess = new WritableProperty(_temperature[componentName], (int)StatusCode.Completed, (int)desiredProperties.Version);
+            writablePropertySuccess.AckDescription = "Successfully updated target temperature";
 
-            await _deviceClient.UpdateReportedPropertiesAsync(completedReportedProperty);
+            await _deviceClient.RespondToWritablePropertyEventAsync(propertyName, writablePropertySuccess, componentName);
             _logger.LogDebug($"Property: Update - component=\"{componentName}\", {{\"{propertyName}\": {_temperature[componentName]} }} in °C is {StatusCode.Completed}");
         }
 
@@ -261,9 +251,7 @@ namespace Microsoft.Azure.Devices.Client.Samples
         {
             const string componentName = "deviceInformation";
 
-            TwinCollection deviceInfoTc = PnpConvention.CreateComponentPropertyPatch(
-                componentName,
-                new Dictionary<string, object>
+            var propertyDictionary = new Dictionary<string, object>
                 {
                     { "manufacturer", "element15" },
                     { "model", "ModelIDxcdvmk" },
@@ -273,9 +261,9 @@ namespace Microsoft.Azure.Devices.Client.Samples
                     { "processorManufacturer", "Intel" },
                     { "totalStorage", 256 },
                     { "totalMemory", 1024 },
-                });
+                };
 
-            await _deviceClient.UpdateReportedPropertiesAsync(deviceInfoTc, cancellationToken);
+            await _deviceClient.UpdatePropertiesAsync(propertyDictionary, componentName, cancellationToken);
             _logger.LogDebug($"Property: Update - component = '{componentName}', properties update is complete.");
         }
 
@@ -291,9 +279,7 @@ namespace Microsoft.Azure.Devices.Client.Samples
                 { workingSetName, workingSet },
             };
 
-            using Message msg = PnpConvention.CreateMessage(telemetry);
-
-            await _deviceClient.SendEventAsync(msg, cancellationToken);
+            await _deviceClient.SendTelemetryAsync(telemetry, cancellationToken: cancellationToken);
             _logger.LogDebug($"Telemetry: Sent - {JsonConvert.SerializeObject(telemetry)} in KB.");
         }
 
@@ -301,9 +287,7 @@ namespace Microsoft.Azure.Devices.Client.Samples
         private async Task SendDeviceSerialNumberAsync(CancellationToken cancellationToken)
         {
             const string propertyName = "serialNumber";
-            TwinCollection reportedProperties = PnpConvention.CreatePropertyPatch(propertyName, SerialNumber);
-
-            await _deviceClient.UpdateReportedPropertiesAsync(reportedProperties, cancellationToken);
+            await _deviceClient.UpdatePropertyAsync(propertyName, SerialNumber, cancellationToken: cancellationToken);
             _logger.LogDebug($"Property: Update - {{ \"{propertyName}\": \"{SerialNumber}\" }} is complete.");
         }
 
@@ -323,9 +307,9 @@ namespace Microsoft.Azure.Devices.Client.Samples
         {
             const string telemetryName = "temperature";
             double currentTemperature = _temperature[componentName];
-            using Message msg = PnpConvention.CreateMessage(telemetryName, currentTemperature, componentName);
 
-            await _deviceClient.SendEventAsync(msg, cancellationToken);
+            await _deviceClient.SendTelemetryAsync(telemetryName, currentTemperature, componentName, cancellationToken: cancellationToken);
+
             _logger.LogDebug($"Telemetry: Sent - component=\"{componentName}\", {{ \"{telemetryName}\": {currentTemperature} }} in °C.");
 
             if (_temperatureReadingsDateTimeOffset.ContainsKey(componentName))
@@ -347,9 +331,7 @@ namespace Microsoft.Azure.Devices.Client.Samples
         {
             const string propertyName = "maxTempSinceLastReboot";
             double maxTemp = _maxTemp[componentName];
-            TwinCollection reportedProperties = PnpConvention.CreateComponentPropertyPatch(componentName, propertyName, maxTemp);
-
-            await _deviceClient.UpdateReportedPropertiesAsync(reportedProperties, cancellationToken);
+            await _deviceClient.UpdatePropertyAsync(propertyName, maxTemp, componentName, cancellationToken: cancellationToken);
             _logger.LogDebug($"Property: Update - component=\"{componentName}\", {{ \"{propertyName}\": {maxTemp} }} in °C is complete.");
         }
     }
