@@ -89,8 +89,8 @@ jobs:
         inputs:
           command: 'restore'
           restoreSolution: '**/*.csproj'
-          feedsToUse: 'select'
-          includeNuGetOrg: true
+          feedsToUse: 'config'
+          nugetConfigPath: 'nuget.config'
       - powershell: ./build.ps1 -clean -configuration Release -run
         displayName: build and run
         env:
